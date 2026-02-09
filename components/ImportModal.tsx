@@ -1,0 +1,1 @@
+// Unificado no App.tsx
