@@ -71,16 +71,45 @@ export const QuoteList: React.FC<QuoteListProps> = ({ requisitions, onUpdateStat
   const calculatePreview = (req: Requisition, quote: SupplierQuote) => {
     const base = quote.price || 0;
     const freight = (quote.freight || 0) / (req.quantity || 1);
-    const taxes = (base * (quote.ipiRate || 0)/100) + (base * (quote.icmsRate || 0)/100) + (base * (quote.pisRate || 0)/100) + (base * (quote.cofinsRate || 0)/100);
-    const gross = base + freight + taxes;
+    
+    // Custo Bruto (Saída de Caixa): Base + Frete + IPI
+    // Assumindo IPI "por fora" e outros "por dentro"
+    const ipi = base * ((quote.ipiRate || 0)/100);
+    const icms = base * ((quote.icmsRate || 0)/100);
+    const pis = base * ((quote.pisRate || 0)/100);
+    const cofins = base * ((quote.cofinsRate || 0)/100);
+    
+    const gross = base + freight + ipi;
 
-    // Lógica simplificada de crédito para o preview
-    let credits = 0;
-    if (buyer?.taxRegime === 'REAL') {
-       credits += (base * (quote.icmsRate || 0)/100);
-       credits += (base * (quote.pisRate || 0)/100);
-       credits += (base * (quote.cofinsRate || 0)/100);
+    // Regra de Ouro: Uso e Consumo zera crédito
+    const itemUseType = quote.itemUseType || req.itemUseType || 'INDUSTRIAL_INPUT';
+    if (itemUseType === 'CONSUMPTION') {
+       return { gross, net: gross };
     }
+
+    let credits = 0;
+    
+    // 1. ICMS: Lucro Real ou Presumido
+    const isInputOrResale = ['INDUSTRIAL_INPUT', 'RESALE', 'FIXED_ASSET'].includes(itemUseType);
+    if (isInputOrResale) {
+       if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
+          credits += icms;
+       }
+    }
+
+    // 2. PIS/COFINS: Apenas Lucro Real e Fornecedor não Simples
+    if (buyer?.taxRegime === 'REAL' && isInputOrResale) {
+       const supplier = suppliers.find(s => s.id === quote.companyId);
+       if (supplier?.taxRegime !== 'SIMPLES') {
+          credits += pis + cofins;
+       }
+    }
+    
+    // 3. IPI: Apenas Indústria (Real/Presumido) recupera se for insumo
+    if (buyer?.taxRegime !== 'SIMPLES' && itemUseType === 'INDUSTRIAL_INPUT') {
+       credits += ipi;
+    }
+
     return { gross, net: gross - credits };
   };
 

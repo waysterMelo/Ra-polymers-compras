@@ -105,12 +105,35 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
     const base = quote.price || 0;
     const freight = (quote.freight || 0) / (req.quantity || 1);
     const ipi = base * ((quote.ipiRate || 0)/100);
+    // ICMS sempre calculado (nominal), mas o crédito depende do regime (backend resolve o crédito real)
     const icms = base * ((quote.icmsRate || 0)/100);
     const pis = base * ((quote.pisRate || 0)/100);
     const cofins = base * ((quote.cofinsRate || 0)/100);
-    const gross = base + freight + ipi + icms + pis + cofins;
+    
+    // Custo Bruto (Saída de Caixa): Preço + Frete + IPI (ICMS/PIS/COFINS já estão no preço base no padrão BR)
+    const gross = base + freight + ipi;
+    
+    // Se for Uso e Consumo, não gera crédito nenhum
+    if (isConsumption) {
+       return { gross, net: gross, credits: 0 };
+    }
+
+    // Créditos Estimados
     let credits = 0;
-    if (buyer?.taxRegime === 'REAL') credits += icms + pis + cofins;
+    
+    // 1. ICMS: Lucro Real ou Presumido (exceto Simples)
+    if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
+       credits += icms;
+    }
+
+    // 2. PIS/COFINS: Apenas Lucro Real e Fornecedor não Simples
+    if (buyer?.taxRegime === 'REAL') {
+       const supplier = suppliers.find(s => s.id === quote.companyId);
+       if (supplier?.taxRegime !== 'SIMPLES') {
+          credits += pis + cofins;
+       }
+    }
+    
     return { gross, net: gross - credits, credits };
   };
 
@@ -120,6 +143,12 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
   const activeQuotes = localQuotes[selectedReqId || ''] || [];
   const activeQuote = activeQuotes[activeSuppIdx];
   const winner = activeQuotes.find(q => q.isSelected);
+
+  const activeSupplier = suppliers.find(s => s.id === activeQuote?.companyId);
+  const isSimplesSupplier = activeSupplier?.taxRegime === 'SIMPLES';
+  
+  const currentUseType = activeQuote?.itemUseType || selectedReq?.itemUseType || 'INDUSTRIAL_INPUT';
+  const isConsumption = currentUseType === 'CONSUMPTION';
 
   return (
     <div className="flex flex-col h-full gap-6 animate-in fade-in duration-700">
@@ -245,6 +274,18 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
                   <div className="flex flex-col lg:flex-row gap-12">
                      <div className="flex-1 space-y-8">
                         <div>
+                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2 mb-3 block">Destinação da Mercadoria</label>
+                           <select 
+                              className="w-full bg-slate-50 border-2 border-slate-100 px-8 py-5 rounded-3xl text-sm font-black text-slate-700 focus:bg-white focus:border-blue-500 outline-none transition-all cursor-pointer shadow-inner mb-4" 
+                              value={currentUseType} 
+                              onChange={(e) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'itemUseType', e.target.value)}
+                           >
+                              <option value="INDUSTRIAL_INPUT">Matéria-prima / Industrialização</option>
+                              <option value="CONSUMPTION">Material de Uso e Consumo</option>
+                              <option value="RESALE">Revenda</option>
+                              <option value="FIXED_ASSET">Ativo Imobilizado</option>
+                           </select>
+
                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2 mb-3 block">Fornecedor Selecionado</label>
                            <select className="w-full bg-slate-50 border-2 border-slate-100 px-8 py-5 rounded-3xl text-sm font-black text-slate-700 focus:bg-white focus:border-blue-500 outline-none transition-all cursor-pointer shadow-inner" value={activeQuote?.companyId || ''} onChange={(e) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'companyId', e.target.value)}>
                               <option value="">Selecione um parceiro...</option>
@@ -262,14 +303,36 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
                      </div>
                      <div className="flex-1 space-y-8">
                         <p className="text-[10px] font-black text-amber-600 uppercase tracking-[0.2em] flex items-center gap-2 mb-2 px-2"><Receipt className="w-4 h-4" /> Componentes Tributários (%)</p>
-                        <div className="grid grid-cols-2 gap-8">
-                           <CurrencyInput label="IPI (%)" prefix="" value={activeQuote?.ipiRate || 0} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'ipiRate', v)} color="amber" />
-                           <CurrencyInput label="ICMS (%)" prefix="" value={activeQuote?.icmsRate || 0} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'icmsRate', v)} color="amber" />
+                        
+                        <div className={`transition-all duration-500 ${isConsumption ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
+                            <div className="grid grid-cols-2 gap-8 mb-8">
+                               <CurrencyInput label="IPI (%)" prefix="" value={isConsumption ? 0 : (activeQuote?.ipiRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'ipiRate', v)} color="amber" />
+                               <CurrencyInput label="ICMS (%)" prefix="" value={isConsumption ? 0 : (activeQuote?.icmsRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'icmsRate', v)} color="amber" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-8 relative">
+                               <div className={isSimplesSupplier ? "opacity-50 pointer-events-none grayscale" : ""}>
+                                  <CurrencyInput label="PIS (%)" prefix="" value={(isSimplesSupplier || isConsumption) ? 0 : (activeQuote?.pisRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'pisRate', v)} color="amber" />
+                               </div>
+                               <div className={isSimplesSupplier ? "opacity-50 pointer-events-none grayscale" : ""}>
+                                  <CurrencyInput label="COFINS (%)" prefix="" value={(isSimplesSupplier || isConsumption) ? 0 : (activeQuote?.cofinsRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'cofinsRate', v)} color="amber" />
+                               </div>
+                               
+                               {isSimplesSupplier && !isConsumption && (
+                                 <div className="absolute inset-0 flex items-center justify-center z-10">
+                                    <div className="bg-amber-100 text-amber-800 text-[10px] font-bold px-3 py-1.5 rounded-full shadow-sm border border-amber-200 flex items-center gap-2">
+                                       <Ban className="w-3 h-3" /> Fornecedor Simples Nacional (Não gera crédito)
+                                    </div>
+                                 </div>
+                               )}
+                            </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-8">
-                           <CurrencyInput label="PIS (%)" prefix="" value={activeQuote?.pisRate || 0} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'pisRate', v)} color="amber" />
-                           <CurrencyInput label="COFINS (%)" prefix="" value={activeQuote?.cofinsRate || 0} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'cofinsRate', v)} color="amber" />
-                        </div>
+
+                        {isConsumption && (
+                           <div className="bg-slate-100 text-slate-500 text-xs font-bold p-4 rounded-2xl border border-slate-200 flex items-center gap-3">
+                              <Ban className="w-5 h-5 text-slate-400" />
+                              <p>Material de <span className="text-slate-700 font-black">Uso e Consumo</span> não gera crédito tributário.</p>
+                           </div>
+                        )}
                         <div className="bg-amber-50/50 p-6 rounded-[2.5rem] border border-amber-100/50 text-[10px] font-bold text-amber-800/70 flex items-center gap-4 italic leading-relaxed">
                            <Info className="w-6 h-6 flex-shrink-0 text-amber-500" />
                            O Motor Fiscal processa os créditos automaticamente com base no perfil do comprador {buyer?.name || 'RA Polymers'}.

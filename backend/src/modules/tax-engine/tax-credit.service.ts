@@ -28,45 +28,75 @@ export class TaxCreditService {
 
     const freightPerUnit = freight / (quantity || 1);
 
-    // 1. Calculamos o valor bruto de cada imposto (O que sai do bolso na nota)
+    // 1. Valores Nominais dos Impostos (Base = Preço Unitário)
+    // Assumindo que o preço informado já contém ICMS/PIS/COFINS por dentro (padrão BR), mas IPI é por fora.
     const ipiValue = price * (ipiRate / 100);
-    const icmsValue = price * (icmsRate / 100);
-    const pisValue = price * (pisRate / 100);
-    const cofinsValue = price * (cofinsRate / 100);
+    
+    // O valor monetário que "estaria" embutido ou destacado para crédito
+    const icmsMonetary = price * (icmsRate / 100);
+    const pisMonetary = price * (pisRate / 100);
+    const cofinsMonetary = price * (cofinsRate / 100);
 
-    // Custo de Nota (TCO Bruto): Preço + Frete + Impostos "por fora" ou informados
-    const grossCostUnit = price + freightPerUnit + ipiValue + icmsValue + pisValue + cofinsValue;
+    // 2. Custo Bruto (O que sai do caixa imediatamente)
+    // Preço (com impostos "por dentro") + Frete + IPI ("por fora")
+    const grossCostUnit = price + freightPerUnit + ipiValue;
 
-    // 2. LÓGICA DE CRÉDITOS (O que volta para o caixa)
+    // 3. MOTOR DE REGRAS DE CRÉDITO (TRAVAS FISCAIS)
     let creditIcms = 0;
     let creditPis = 0;
     let creditCofins = 0;
     let creditIpi = 0;
+    let alerts: string[] = [];
 
-    const isInputOrResale = ['INDUSTRIAL_INPUT', 'RESALE'].includes(itemUseType);
+    // REGRA DE OURO: Uso e Consumo NUNCA gera crédito
+    if (itemUseType === 'CONSUMPTION') {
+       alerts.push('Créditos anulados: Mercadoria destinada a Uso e Consumo.');
+       // Retorna sem créditos
+       return {
+         grossCost: grossCostUnit,
+         creditIcms: 0,
+         creditPis: 0,
+         creditCofins: 0,
+         netCost: grossCostUnit,
+         alerts,
+         taxMemory: { ...ctx, grossCostUnit, netCostUnit: grossCostUnit, credits: { total: 0 } }
+       };
+    }
 
-    // CRÉDITO DE ICMS
-    // Geralmente se for Insumo ou Revenda, gera crédito integral (Exceto se for Consumo/Ativo)
+    // Tratamento de Ativo Imobilizado (FIXED_ASSET)
+    const isInputOrResale = ['INDUSTRIAL_INPUT', 'RESALE', 'FIXED_ASSET'].includes(itemUseType);
+
     if (isInputOrResale) {
-      creditIcms = icmsValue;
+      // 1. CRÉDITO DE ICMS (Lucro Real e Presumido)
+      if (buyerRegime === 'REAL' || buyerRegime === 'PRESUMIDO') {
+         creditIcms = icmsMonetary;
+      }
+
+      // 2. CRÉDITO DE PIS/COFINS (Apenas Lucro Real)
+      if (buyerRegime === 'REAL') {
+        if (supplierRegime === 'SIMPLES') {
+           // Trava do Fornecedor Simples
+           creditPis = 0;
+           creditCofins = 0;
+           if (pisRate > 0 || cofinsRate > 0) {
+             alerts.push('Aviso: Créditos de PIS/COFINS zerados pois Fornecedor é Simples Nacional.');
+           }
+        } else {
+           // Fornecedor Lucro Real ou Presumido -> Gera Crédito
+           creditPis = pisMonetary;
+           creditCofins = cofinsMonetary;
+        }
+      }
     }
 
-    // CRÉDITO DE PIS/COFINS
-    // Só gera crédito se a RA Polymers for LUCRO REAL e for Insumo/Revenda
-    if (buyerRegime === 'REAL' && isInputOrResale) {
-      creditPis = pisValue;
-      creditCofins = cofinsValue;
-    }
-
-    // CRÉDITO DE IPI
-    // Gera crédito se for Insumo Industrial e Comprador for REAL/PRESUMIDO (Indústria)
+    // IPI: Apenas Indústria (Real/Presumido) recupera se for insumo
     if (buyerRegime !== 'SIMPLES' && itemUseType === 'INDUSTRIAL_INPUT') {
-      creditIpi = ipiValue;
+       creditIpi = ipiValue; 
     }
 
-    // 3. CUSTO LÍQUIDO (O "Custo Real" para a empresa)
-    // Fórmula: Tudo o que paguei - Tudo o que recuperei
-    const netCostUnit = grossCostUnit - creditIcms - creditPis - creditCofins - creditIpi;
+    // 4. Fechamento
+    const totalCredits = creditIcms + creditPis + creditCofins + creditIpi;
+    const netCostUnit = grossCostUnit - totalCredits;
 
     // Memória de Cálculo (Para Auditoria)
     const taxMemory = {
@@ -79,17 +109,21 @@ export class TaxCreditService {
         icms: creditIcms,
         pis: creditPis,
         cofins: creditCofins,
-        ipi: creditIpi
+        ipi: creditIpi,
+        total: totalCredits
       },
-      netCostUnit
+      netCostUnit,
+      alerts
     };
 
     return {
+      grossCost: grossCostUnit,
       creditIcms,
       creditPis,
       creditCofins,
       netCost: netCostUnit,
-      taxMemory
+      taxMemory,
+      alerts
     };
   }
 }

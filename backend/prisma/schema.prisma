@@ -10,6 +10,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum ItemUseType {
+  INDUSTRIAL_INPUT
+  CONSUMPTION
+  RESALE
+  FIXED_ASSET
+}
+
 // Modelo de Empresas (Compradora e Fornecedores)
 model Fornecedor {
   id          String   @id @default(uuid())
@@ -52,6 +59,7 @@ model Requisition {
   estimatedCost Float?   
   finalCost     Float?   
   paymentTerms  String?  
+  itemUseType   ItemUseType @default(CONSUMPTION)
   requestDate   DateTime @default(now())
   deliveryDate  DateTime? 
   status        String   
@@ -77,7 +85,7 @@ model Quote {
   isSelected   Boolean     @default(false)
 
   // --- CAMPOS FISCAIS (FASE 1) ---
-  itemUseType  String?     // RESALE | INDUSTRIAL_INPUT | CONSUMPTION | FIXED_ASSET
+  itemUseType  ItemUseType @default(CONSUMPTION)
   
   // ICMS
   cstIcms      String?     // CST do ICMS

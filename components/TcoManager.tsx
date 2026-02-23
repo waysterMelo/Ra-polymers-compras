@@ -77,7 +77,19 @@ export const TcoManager: React.FC<TcoManagerProps> = ({ requisition, onSave, onC
     const icms = basePrice * ((quote.icmsRate || 0) / 100);
     const pis = basePrice * ((quote.pisRate || 0) / 100);
     const cofins = basePrice * ((quote.cofinsRate || 0) / 100);
-    const grossCostUnit = basePrice + freightUnit + ipi + icms + pis + cofins;
+    
+    // Custo Bruto: Preço + Frete + IPI (ICMS/PIS/COFINS estão no preço base)
+    const grossCostUnit = basePrice + freightUnit + ipi;
+
+    // Se for Uso e Consumo, não gera crédito nenhum
+    if (quote.itemUseType === 'CONSUMPTION') {
+       return {
+         grossCostUnit,
+         netCostUnit: grossCostUnit,
+         credits: { icms: 0, pis: 0, cofins: 0, ipi: 0 },
+         totalCredits: 0
+       };
+    }
 
     // 2. Créditos Recuperáveis (O que volta para o caixa)
     let creditIcms = 0;
@@ -85,15 +97,22 @@ export const TcoManager: React.FC<TcoManagerProps> = ({ requisition, onSave, onC
     let creditCofins = 0;
     let creditIpi = 0;
 
-    const isInputOrResale = ['INDUSTRIAL_INPUT', 'RESALE'].includes(quote.itemUseType || 'INDUSTRIAL_INPUT');
+    const isInputOrResale = ['INDUSTRIAL_INPUT', 'RESALE', 'FIXED_ASSET'].includes(quote.itemUseType || 'INDUSTRIAL_INPUT');
 
-    // Regra ICMS: Crédito se for Insumo/Revenda
-    if (isInputOrResale) creditIcms = icms;
+    // Regra ICMS: Crédito se for Insumo/Revenda para Lucro Real ou Presumido
+    if (isInputOrResale) {
+       if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
+          creditIcms = icms;
+       }
+    }
 
-    // Regra PIS/COFINS: Só se RA Polymers (Buyer) for LUCRO REAL
+    // Regra PIS/COFINS: Só se Buyer for LUCRO REAL e Fornecedor NÃO for Simples
     if (buyer?.taxRegime === 'REAL' && isInputOrResale) {
-      creditPis = pis;
-      creditCofins = cofins;
+      const supplier = suppliers.find(s => s.id === quote.companyId);
+      if (supplier?.taxRegime !== 'SIMPLES') {
+         creditPis = pis;
+         creditCofins = cofins;
+      }
     }
 
     // Regra IPI: Se for Insumo Industrial e Comprador for Indústria (Real/Presumido)

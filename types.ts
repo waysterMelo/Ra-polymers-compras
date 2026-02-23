@@ -65,6 +65,7 @@ export interface Requisition {
   estimatedCost: number | null;
   finalCost: number | null;
   paymentTerms?: string; 
+  itemUseType?: ItemUseType;
   requestDate: string;
   deliveryDate: string | null;
   status: Status;

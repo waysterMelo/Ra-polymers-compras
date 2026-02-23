@@ -93,7 +93,8 @@ export class RequisitionsService {
       const taxCtx: TaxContext = {
         buyerRegime: buyer.taxRegime,
         supplierRegime: supplier.taxRegime,
-        itemUseType: q.itemUseType || 'INDUSTRIAL_INPUT',
+        // Usa o tipo definido na cotação se houver, senão usa o da requisição, senão padrão
+        itemUseType: q.itemUseType || requisition.itemUseType || 'INDUSTRIAL_INPUT',
         price: q.price || 0,
         quantity: requisition.quantity || 1,
         freight: q.freight || 0,
@@ -112,7 +113,7 @@ export class RequisitionsService {
         freight: q.freight || 0,
         leadTime: q.leadTime || 0,
         paymentTerms: q.paymentTerms || '',
-        itemUseType: q.itemUseType || 'INDUSTRIAL_INPUT',
+        itemUseType: taxCtx.itemUseType, // Persiste o tipo usado no cálculo
         ipiRate: q.ipiRate || 0,
         icmsRate: q.icmsRate || 0,
         pisRate: q.pisRate || 0,
